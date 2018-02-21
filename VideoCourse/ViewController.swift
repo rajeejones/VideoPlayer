@@ -18,15 +18,18 @@ class ViewController: UIViewController {
     @IBOutlet weak var rewindButton: UIButton!
     
     @IBOutlet weak var progressContainerView: UIView!
-    @IBOutlet weak var videoProgressView: UIProgressView!
+    @IBOutlet weak var videoProgressSlider: UISlider!
     @IBOutlet weak var endDurationLabel: UILabel!
     @IBOutlet weak var startDurationLabel: UILabel!
     
-    var player: AVPlayer!
+    @objc var player: AVPlayer!
     var playerLayer: AVPlayerLayer!
     var isPlaying = false
     let videoURLString = "http://mirrors.standaloneinstaller.com/video-sample/jellyfish-25-mbps-hd-hevc.mp4"
-    
+
+    var activityIndicator = UIActivityIndicatorView()
+    var strLabel = UILabel()
+    let effectView = UIVisualEffectView(effect: UIBlurEffect(style: UIBlurEffectStyle.dark))
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -36,6 +39,7 @@ class ViewController: UIViewController {
             return
             
         }
+        // Add Activity Indicator to view, hide play/pause buttons
         
         setupVideoPlayer(with: url)
     }
@@ -49,28 +53,18 @@ class ViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         
-        player?.play()
-        playButton.setImage(UIImage.imageFromSystemBarButton(.pause), for: .normal)
-        addTimeObserver()
-        isPlaying = true
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            UIView.animate(withDuration: 0.3, animations: {
-                self.playerButtonsView.alpha = 0
-            })
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-            UIView.animate(withDuration: 0.3, animations: {
-                self.progressContainerView.alpha = 0
-            })
-        }
+        activityIndicator("Loading Video..")
+       
     }
     
     
     func setupVideoPlayer(with videoURL: URL) {
         player = AVPlayer(url: videoURL)
         player.currentItem?.addObserver(self, forKeyPath: "duration", options: [.new, .initial], context: nil)
+        player.currentItem?.addObserver(self, forKeyPath: "status", options: [.new, .initial], context: nil)
+        player.currentItem?.addObserver(self, forKeyPath: #keyPath(ViewController.player.timeControlStatus), options: [.new, .initial], context: nil)
+        player.currentItem?.addObserver(self, forKeyPath: #keyPath(ViewController.player.currentItem.isPlaybackLikelyToKeepUp), options: [.new, .initial], context: nil)
+        
         playerLayer = AVPlayerLayer(player: player)
         playerLayer.videoGravity = .resize
         
@@ -92,6 +86,31 @@ class ViewController: UIViewController {
         videoView.bringSubview(toFront: playerButtonsView)
         videoView.bringSubview(toFront: progressContainerView)
         
+    }
+    
+    func activityIndicator(_ title: String) {
+        
+        strLabel.removeFromSuperview()
+        activityIndicator.removeFromSuperview()
+        effectView.removeFromSuperview()
+        
+        strLabel = UILabel(frame: CGRect(x: 50, y: 0, width: 160, height: 46))
+        strLabel.text = title
+        strLabel.font = UIFont.systemFont(ofSize: 14, weight: UIFont.Weight.medium)
+        strLabel.textColor = UIColor(white: 0.9, alpha: 0.7)
+        
+        effectView.frame = CGRect(x: view.frame.midX - strLabel.frame.width/2, y: view.frame.midY - strLabel.frame.height/2 , width: 160, height: 46)
+        effectView.layer.cornerRadius = 15
+        effectView.layer.masksToBounds = true
+        
+        activityIndicator = UIActivityIndicatorView(activityIndicatorStyle: .whiteLarge)
+        activityIndicator.frame = CGRect(x: 0, y: 0, width: 46, height: 46)
+        activityIndicator.startAnimating()
+        
+        effectView.contentView.addSubview(activityIndicator)
+        effectView.contentView.addSubview(strLabel)
+        videoView.addSubview(effectView)
+        videoView.bringSubview(toFront: effectView)
     }
 
     @objc func showPlayerButtons() {
@@ -123,6 +142,32 @@ class ViewController: UIViewController {
             self.endDurationLabel.text = getTimeString(from: player.currentItem!.duration)
             self.startDurationLabel.text = "00:00"
         }
+        
+        // play when status is ready?
+        if keyPath == "status" || keyPath == "timeControlStatus" || keyPath == #keyPath(ViewController.player.currentItem.isPlaybackLikelyToKeepUp) {
+            if (player.status == .readyToPlay && player.timeControlStatus != .waitingToPlayAtSpecifiedRate && player.currentItem!.isPlaybackLikelyToKeepUp) {
+                
+                self.effectView.removeFromSuperview()
+                player.play()
+                playButton.setImage(UIImage.imageFromSystemBarButton(.pause), for: .normal)
+                addTimeObserver()
+                isPlaying = true
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    UIView.animate(withDuration: 0.3, animations: {
+                        self.playerButtonsView.alpha = 0
+                    })
+                }
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                    UIView.animate(withDuration: 0.3, animations: {
+                        self.progressContainerView.alpha = 0
+                    })
+                }
+            } else if player.status == .failed {
+                player.pause()
+            }
+        }
     }
     
     // MARK: - Helpers
@@ -142,8 +187,10 @@ class ViewController: UIViewController {
         let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         _ = player.addPeriodicTimeObserver(forInterval: interval, queue: DispatchQueue.main, using: { [weak self] (time) in
             guard let currentItem = self?.player.currentItem else { return }
-            
-            self?.videoProgressView.setProgress(Float(currentItem.currentTime().seconds/currentItem.duration.seconds), animated: true)
+        
+            self?.videoProgressSlider.maximumValue = Float(currentItem.duration.seconds)
+            self?.videoProgressSlider.minimumValue = 0.0
+            self?.videoProgressSlider.setValue(Float(currentItem.currentTime().seconds/currentItem.duration.seconds), animated: true)
             self?.endDurationLabel.text = self?.getTimeString(from: currentItem.currentTime())
             self?.startDurationLabel.text = self?.getTimeString(from: CMTime.init(seconds:(currentItem.duration.seconds - currentItem.currentTime().seconds), preferredTimescale:CMTimeScale(NSEC_PER_SEC)))
         })
@@ -152,14 +199,15 @@ class ViewController: UIViewController {
     // MARK: - Actions
     @IBAction func playButtonPressed(_ sender: UIButton) {
         if isPlaying {
-            player?.pause()
+            player.pause()
             sender.setImage(UIImage.imageFromSystemBarButton(.pause), for: .normal)
-        } else {
-            player?.play()
+            isPlaying = false
+        } else if player.status == .readyToPlay {
+            player.play()
             sender.setImage(UIImage.imageFromSystemBarButton(.play), for: .normal)
-            
+            isPlaying = true
         }
-        isPlaying = !isPlaying
+        
     }
     @IBAction func fastForwardButtonPressed(_ sender: UIButton) {
         // check if there is duration
@@ -186,6 +234,9 @@ class ViewController: UIViewController {
         }
         let time = CMTimeMake(Int64(newTime*1000), 1000)
         player?.seek(to: time)
+    }
+    @IBAction func videoSliderScrubbed(_ sender: UISlider) {
+        player.seek(to: CMTimeMake(Int64(sender.value*1000), 1000))
     }
     
     
@@ -218,4 +269,6 @@ extension UIImage{
         return UIImage()
     }
 }
+
+
 
